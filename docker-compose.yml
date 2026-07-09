@@ -1,0 +1,51 @@
+services:
+  temp-db:
+    image: postgres:15
+    container_name: temp-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tempdb}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - temp-data:/var/lib/postgresql/data
+    networks:
+      - temp-network
+
+  temp-backend:
+    build:
+      context: ../temp-monitor-api
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://temp-db:5432/${POSTGRES_DB:-tempdb}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-admin}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?Debe definir APP_JWT_SECRET}
+      APP_JWT_EXPIRATION_HOURS: ${APP_JWT_EXPIRATION_HOURS:-24}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    restart: unless-stopped
+    depends_on:
+      - temp-db
+    networks:
+      - temp-network
+
+  temp-frontend:
+    build:
+      context: ../temp-monitor-frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    restart: unless-stopped
+    depends_on:
+      - temp-backend
+    networks:
+      - temp-network
+
+networks:
+  temp-network:
+    driver: bridge
+
+volumes:
+  temp-data:
