@@ -1,20 +1,88 @@
+import json
+import os
 import requests
 import time
 import random
 
 BASE = "http://localhost:80"
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "sensores_cache.json")
+
+
+ADMIN_EMAIL = "admin@test.com"
+ADMIN_PASSWORD = "admin123"
+
+_jwt_token = None
+
+
+def _login_admin():
+    global _jwt_token
+    if _jwt_token:
+        return _jwt_token
+    try:
+        r = requests.post(f"{BASE}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=5)
+        if r.status_code == 200:
+            _jwt_token = r.json()["token"]
+            print(f"  ✓ Admin autenticado como {ADMIN_EMAIL}")
+            return _jwt_token
+        print(f"  ✗ Error al autenticar admin: {r.status_code} {r.text}")
+    except requests.RequestException as e:
+        print(f"  ✗ Error de conexión al autenticar admin: {e}")
+    return None
+
+
+def _cargar_cache():
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def _guardar_cache(mac, uuid, api_key):
+    cache = _cargar_cache()
+    cache[mac] = {"uuid": uuid, "apiKey": api_key}
+    with open(CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
 
 
 def registrar_sensor(mac):
     resp = requests.post(f"{BASE}/api/sensores/registrar", json={"macAddress": mac})
     data = resp.json()
     print(f"[REGISTRAR {mac}] {resp.status_code} -> {data}")
-    if resp.status_code != 200:
-        code = data.get("code", "N/A")
-        msg = data.get("message", str(data))
-        print(f"[ERROR] {code}: {msg}")
-        return None
-    return data["uuid"], data["apiKey"]
+
+    if resp.status_code == 200:
+        uuid, api_key = data["uuid"], data["apiKey"]
+        _guardar_cache(mac, uuid, api_key)
+        return uuid, api_key
+
+    code = data.get("code", "")
+    msg = data.get("message", str(data))
+    print(f"[ERROR] {code}: {msg}")
+
+    if resp.status_code == 409:
+        cache = _cargar_cache()
+        if mac in cache:
+            print(f"  ↳ Recuperado del caché local → UUID: {cache[mac]['uuid']}")
+            return cache[mac]["uuid"], cache[mac]["apiKey"]
+
+        jwt = _login_admin()
+        if jwt:
+            headers = {"Authorization": f"Bearer {jwt}"}
+            r = requests.post(
+                f"{BASE}/api/sensores/renew-api-key-by-mac",
+                headers=headers,
+                json={"macAddress": mac},
+            )
+            if r.status_code == 200:
+                d = r.json()
+                print(f"  ↳ API key renovada → UUID: {d['uuid']}")
+                _guardar_cache(mac, d["uuid"], d["apiKey"])
+                return d["uuid"], d["apiKey"]
+            else:
+                err = r.json()
+                print(f"  ↳ Error al renovar: {err.get('code')} – {err.get('message', err)}")
+        print("  ↳ No se pudo recuperar. Se omite.")
+
+    return None
 
 
 def enviar_lectura(sensor_uuid, api_key, temperatura, intento, total):
@@ -40,6 +108,17 @@ def consultar_estado(sensor_uuid, api_key):
     print(f"[ESTADO] {resp.status_code} -> {resp.json()}")
 
 
+def sensor_activo(sensor_uuid, api_key):
+    headers = {"X-API-KEY": api_key, "X-Sensor-ID": sensor_uuid}
+    try:
+        resp = requests.get(f"{BASE}/api/sensores/{sensor_uuid}/estado", headers=headers, timeout=5)
+        if resp.status_code == 200:
+            return resp.text.strip('"') == "ACTIVO"
+    except requests.RequestException:
+        pass
+    return False
+
+
 # ═══════════════════════════════════════════
 # FASE 1 — Registrar todos los sensores
 # ═══════════════════════════════════════════
@@ -54,7 +133,7 @@ for s in range(cantidad_sensores):
     print(f"\n[{s+1}/{cantidad_sensores}] Registrando {mac}...")
     resultado = registrar_sensor(mac)
     if resultado is None:
-        print("  ↳ No se pudo registrar.")
+        print("  ↳ No se pudo registrar ni recuperar del caché. Se omite.")
         continue
     uuid, apikey = resultado
     sensores.append({"mac": mac, "uuid": uuid, "apiKey": apikey})
@@ -95,8 +174,26 @@ desviacion_cant = cantidad_lecturas * (desviacion_pct / 100)
 
 TIEMPO_BASE = 5  # segundos entre rondas
 
+# ─── Verificar qué sensores están ACTIVOS (configurados en el panel) ───
 print(f"\n{'='*60}")
-print(f"Enviando lecturas para {len(sensores)} sensor(es)")
+print("Verificando estado de los sensores...")
+print(f"{'='*60}")
+sensores_activos = []
+for sen in sensores:
+    if sensor_activo(sen["uuid"], sen["apiKey"]):
+        print(f"  ✓ {sen['mac']} → ACTIVO")
+        sensores_activos.append(sen)
+    else:
+        print(f"  ✗ {sen['mac']} → NO ACTIVO (se omite)")
+
+if not sensores_activos:
+    print("\nNingún sensor está ACTIVO. Saliendo.")
+    exit(0)
+
+sensores = sensores_activos
+
+print(f"\n{'='*60}")
+print(f"Enviando lecturas para {len(sensores)} sensor(es) ACTIVO(s)")
 print(f"{'='*60}")
 
 # ─── Pre-calcular cuántas lecturas enviará cada sensor ───
