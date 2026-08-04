@@ -22,6 +22,8 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-admin}
       APP_JWT_SECRET: ${APP_JWT_SECRET:?Debe definir APP_JWT_SECRET}
       APP_JWT_EXPIRATION_HOURS: ${APP_JWT_EXPIRATION_HOURS:-24}
+      CAMARA_MUESTREO_CADENCIA_MS: ${CAMARA_MUESTREO_CADENCIA_MS:-165000}
+      CAMARA_MUESTREO_INITIAL_DELAY_MS: ${CAMARA_MUESTREO_INITIAL_DELAY_MS:-60000}
     ports:
       - "${SERVER_PORT:-8080}:8080"
     restart: unless-stopped
@@ -35,6 +37,7 @@ services:
       context: ../temp-monitor-frontend
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+        VITE_CAMARA_MUESTREO_CADENCIA_MS: ${VITE_CAMARA_MUESTREO_CADENCIA_MS:-165000}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     restart: unless-stopped
