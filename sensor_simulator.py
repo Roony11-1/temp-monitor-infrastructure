@@ -172,7 +172,7 @@ except ValueError:
 desviacion_temp = temperatura_promedio * (desviacion_pct / 100)
 desviacion_cant = cantidad_lecturas * (desviacion_pct / 100)
 
-TIEMPO_BASE = 180  # segundos entre rondas (~3 min)
+TIEMPO_BASE = 300  # segundos entre rondas (~5 min)
 
 # ─── Verificar qué sensores están ACTIVOS (configurados en el panel) ───
 print(f"\n{'='*60}")
