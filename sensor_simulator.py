@@ -44,6 +44,33 @@ def _guardar_cache(mac, uuid, api_key):
         json.dump(cache, f, indent=2)
 
 
+def _renew_api_key(mac):
+    for intento in range(2):
+        jwt = _login_admin()
+        if not jwt:
+            return None
+        r = requests.post(
+            f"{BASE}/api/sensores/renew-api-key-by-mac",
+            headers={"Authorization": f"Bearer {jwt}"},
+            json={"macAddress": mac},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            d = r.json()
+            print(f"  ↳ API key renovada → UUID: {d['uuid']}")
+            _guardar_cache(mac, d["uuid"], d["apiKey"])
+            return d["uuid"], d["apiKey"]
+        if r.status_code == 401:
+            # Access token expirado (vida corta): re-login e intento único más
+            _jwt_token = None
+            print("  ↳ Access token expirado, re-autenticando...")
+            continue
+        err = r.json()
+        print(f"  ↳ Error al renovar: {err.get('code')} – {err.get('message', err)}")
+        return None
+    return None
+
+
 def registrar_sensor(mac):
     resp = requests.post(f"{BASE}/api/sensores/registrar", json={"macAddress": mac})
     data = resp.json()
@@ -65,21 +92,12 @@ def registrar_sensor(mac):
             return cache[mac]["uuid"], cache[mac]["apiKey"]
 
         jwt = _login_admin()
-        if jwt:
-            headers = {"Authorization": f"Bearer {jwt}"}
-            r = requests.post(
-                f"{BASE}/api/sensores/renew-api-key-by-mac",
-                headers=headers,
-                json={"macAddress": mac},
-            )
-            if r.status_code == 200:
-                d = r.json()
-                print(f"  ↳ API key renovada → UUID: {d['uuid']}")
-                _guardar_cache(mac, d["uuid"], d["apiKey"])
-                return d["uuid"], d["apiKey"]
-            else:
-                err = r.json()
-                print(f"  ↳ Error al renovar: {err.get('code')} – {err.get('message', err)}")
+        if not jwt:
+            print("  ↳ No se pudo autenticar. Se omite.")
+            return None
+        recuperado = _renew_api_key(mac)
+        if recuperado:
+            return recuperado[0], recuperado[1]
         print("  ↳ No se pudo recuperar. Se omite.")
 
     return None
